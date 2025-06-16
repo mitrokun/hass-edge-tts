@@ -40,7 +40,9 @@ Add Edge TTS integration via UI
 ### Basic example
 
 ```yaml
-service: tts.edge_tts_say
+action: tts.speak
+target:
+  entity_id: tts.edge_tts
 data:
   entity_id: media_player.your_player_entity_id
   message: Hello
@@ -51,7 +53,9 @@ data:
 ### Full example
 
 ```yaml
-service: tts.edge_tts_say
+action: tts.speak
+target:
+  entity_id: tts.edge_tts
 data:
   entity_id: media_player.your_player_entity_id
   message: 吃葡萄不吐葡萄皮，不吃葡萄倒吐葡萄皮
