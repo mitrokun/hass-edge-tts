@@ -1,9 +1,18 @@
-"""The speech service."""
+# --- START OF FILE tts.py ---
+
 import logging
 
-import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
-from homeassistant.components.tts import CONF_LANG, PLATFORM_SCHEMA, Provider
+from homeassistant.components.tts import (
+    TextToSpeechEntity,
+    TTSAudioRequest,
+    TTSAudioResponse,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DOMAIN, CONF_LANG, DEFAULT_LANG
+from .stream_processor import EdgeStreamProcessor
 
 EDGE_TTS_VERSION = '7.0.2'
 try:
@@ -20,7 +29,6 @@ except ImportError:
 
 _LOGGER = logging.getLogger(__name__)
 
-# https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4
 SUPPORTED_VOICES = {
     'zh-CN-XiaoxiaoNeural': 'zh-CN',
     'zh-CN-XiaoyiNeural': 'zh-CN',
@@ -326,100 +334,94 @@ SUPPORTED_LANGUAGES = {
     **dict(zip(SUPPORTED_VOICES.values(), SUPPORTED_VOICES.keys())),
     'zh-CN': 'zh-CN-XiaoxiaoNeural',
 }
-
-DEFAULT_LANG = 'zh-CN'
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Optional(CONF_LANG, default=DEFAULT_LANG): cv.string,
-    },
-    extra=vol.ALLOW_EXTRA,
-)
+SUPPORTED_OPTIONS_LIST = ['voice', 'pitch', 'rate', 'volume']
 
 
-async def async_get_engine(hass, config, discovery_info=None):
-    """Set up the component."""
-    return SpeechProvider(hass, config)
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Edge TTS from a config entry."""
+    processor = hass.data[DOMAIN][config_entry.entry_id]["processor"]
+    async_add_entities([EdgeTtsEntity(config_entry, processor)])
 
 
-class SpeechProvider(Provider):
-    """The provider."""
+class EdgeTtsEntity(TextToSpeechEntity):
+    """The Edge TTS entity."""
 
-    def __init__(self, hass, config):
-        """Init service."""
-        self.name = 'Edge TTS'
-        self.hass = hass
-        self._config = config or {}
-        self._style_options = ['style', 'styledegree', 'role']  # issues/8
-        self._prosody_options = ['pitch', 'rate', 'volume']     # issues/24
+    def __init__(self, config_entry: ConfigEntry, processor: EdgeStreamProcessor):
+        """Initialize the entity."""
+        self._config_entry = config_entry
+        self._processor = processor
+        self._attr_name = "Edge TTS"
+        self._attr_unique_id = config_entry.entry_id
 
     @property
-    def default_language(self):
-        """Return the default language."""
-        return self._config.get(CONF_LANG)
+    def default_language(self) -> str:
+        """Return the default language from config options."""
+        return self._config_entry.options.get(CONF_LANG, DEFAULT_LANG)
 
     @property
-    def supported_languages(self):
+    def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        return list([*SUPPORTED_LANGUAGES.keys(), *SUPPORTED_VOICES.keys()])
+        return list(set([*SUPPORTED_LANGUAGES.keys(), *SUPPORTED_VOICES.keys()]))
 
     @property
-    def supported_options(self):
-        """Return a list of supported options like voice, emotionen."""
-        lst = [CONF_LANG, 'voice']
-        lst.extend(self._style_options)
-        lst.extend(self._prosody_options)
-        return lst
+    def supported_options(self) -> list[str]:
+        """Return a list of supported options."""
+        return SUPPORTED_OPTIONS_LIST
 
-    async def async_get_tts_audio(self, message, language, options=None):
-        """Load TTS audio."""
-        opt = {CONF_LANG: language}
-        if language in SUPPORTED_VOICES:
-            opt[CONF_LANG] = SUPPORTED_VOICES[language]
-            opt['voice'] = language
-        opt = {**self._config, **opt, **(options or {})}
+    def _get_tts_params(self, language: str, options: dict) -> dict:
+        """Helper to determine voice and other params from options."""
+        conf = {**self._config_entry.options, **options}
 
-        # https://docs.microsoft.com/zh-CN/azure/cognitive-services/speech-service/speech-synthesis-markup?tabs=csharp#adjust-speaking-languages
-        lang = opt.get(CONF_LANG) or language
+        resolved_lang = language
+        if resolved_lang in SUPPORTED_VOICES:
+            voice = resolved_lang
+        else:
+            voice = conf.get('voice') or SUPPORTED_LANGUAGES.get(resolved_lang)
 
-        # https://docs.microsoft.com/zh-CN/azure/cognitive-services/speech-service/speech-synthesis-markup?tabs=csharp#use-multiple-voices
-        voice = opt.get('voice') or SUPPORTED_LANGUAGES.get(lang) or 'zh-CN-XiaoxiaoNeural'
+        if not voice:
+            voice = SUPPORTED_LANGUAGES[DEFAULT_LANG]
+            _LOGGER.warning("Could not find a voice for language %s. Falling back to %s", resolved_lang, voice)
 
-        # https://docs.microsoft.com/zh-CN/azure/cognitive-services/speech-service/speech-synthesis-markup?tabs=csharp#adjust-speaking-styles
-        for f in self._style_options:
-            v = opt.get(f)
-            if v is not None:
-                _LOGGER.warning(
-                    'Edge TTS options style/styledegree/role are no longer supported, '
-                    'please remove them from your automation or script. '
-                    'See: https://github.com/hasscc/hass-edge-tts/issues/8'
-                )
-                break
+        return {
+            "voice": voice,
+            "rate": str(conf.get("rate", "+0%")),
+            "pitch": str(conf.get("pitch", "+0Hz")),
+            "volume": str(conf.get("volume", "+0%")),
+        }
 
-        _LOGGER.debug('%s: %s', self.name, [message, opt])
-        mp3 = b''
-        tts = EdgeCommunicate(
-            message,
-            voice=voice,
-            pitch=opt.get('pitch', '+0Hz'),
-            rate=opt.get('rate', '+0%'),
-            volume=opt.get('volume', '+0%'),
-        )
+    async def async_get_tts_audio(
+        self, message: str, language: str, options: dict | None = None
+    ) -> tuple[str, bytes | None]:
+        """Handle non-streaming TTS requests."""
+        options = options or {}
+        params = self._get_tts_params(language, options)
+        _LOGGER.debug("Requesting non-streaming audio with params: %s", params)
+
+        async def single_message_stream():
+            yield message
+
+        audio_generator = self._processor.async_process_stream(single_message_stream(), **params)
+
         try:
-            async for chunk in tts.stream():
-                if chunk["type"] == "audio":
-                    mp3 += chunk["data"]
-                else:
-                    _LOGGER.debug('%s: audio.metadata: %s', self.name, chunk)
-        except edge_tts.exceptions.NoAudioReceived:
-            _LOGGER.warning('%s: failed: %s', self.name, [message, opt])
-            return None, None
-        return 'mp3', mp3
+            mp3_chunks = [chunk async for chunk in audio_generator]
+            if not mp3_chunks:
+                _LOGGER.error("TTS synthesis failed for message: %s", message[:100])
+                return "mp3", None
+            
+            return "mp3", b"".join(mp3_chunks)
+        except Exception as e:
+            _LOGGER.error("Error during non-streaming TTS audio generation: %s", e)
+            return "mp3", None
 
-    def get_tts_audio(self, message, language, options=None):
-        """Load tts audio file from provider."""
-        return None, None
+    async def async_stream_tts_audio(self, request: TTSAudioRequest) -> TTSAudioResponse:
+        """Handle true streaming TTS requests."""
+        params = self._get_tts_params(request.language, request.options)
+        _LOGGER.debug("Requesting streaming audio with params: %s", params)
 
-
-class EdgeCommunicate(edge_tts.Communicate):
-    """ Edge TTS """
+        audio_generator = self._processor.async_process_stream(request.message_gen, **params)
+        
+        return TTSAudioResponse(extension="mp3", data_gen=audio_generator)
