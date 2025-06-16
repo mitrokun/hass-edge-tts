@@ -16,19 +16,7 @@ wget -O - https://hacs.vip/get | DOMAIN=edge_tts REPO_PATH=hasscc/hass-edge-tts 
 ## Config
 
 ```yaml
-# configuration.yaml
-tts:
-  - platform: edge_tts
-    language: zh-CN # Default language or voice (Optional)
-```
-
-#### Configure default options:
-```yaml
-tts:
-  - platform: edge_tts
-    service_name: xiaomo_say # service: tts.xiaomo_say
-    language: zh-CN-XiaoxiaoNeural
-    volume: +10%
+Add Edge TTS integration via UI
 ```
 
 #### Supported languages
