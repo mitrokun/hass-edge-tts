@@ -12,12 +12,13 @@ try:
     from edge_tts.communicate import remove_incompatible_characters
     from pydub import AudioSegment
 except ImportError:
+    # Заглушки, чтобы код оставался синтаксически верным.
     def remove_incompatible_characters(text: str) -> str: return text
     pass
 
 _LOGGER = logging.getLogger(__name__)
 
-
+# Количество миллисекунд, которое мы отрезаем с конца каждого фрагмента
 TRIM_MS_FROM_END = 750
 
 class EdgeStreamProcessor:
@@ -29,24 +30,65 @@ class EdgeStreamProcessor:
         async for chunk in text_stream:
             yield remove_incompatible_characters(chunk).replace('*', '')
 
+    def _find_sentence(self, buffer_text: str) -> tuple[str, str]:
+        """
+        Extracts the first complete sentence from the buffer using a language-agnostic
+        approach for decimal points.
+        """
+        if not buffer_text:
+            return "", ""
+
+        # Use a unique placeholder to temporarily replace decimal points within numbers.
+        DECIMAL_PLACEHOLDER = "##DEC##"
+        safe_text = re.sub(r'(\d)\.(\d)', fr'\1{DECIMAL_PLACEHOLDER}\2', buffer_text)
+
+        match = re.search(r"[.!?]", safe_text)
+        if match:
+            end_index = match.start() + 1
+            sentence_part = safe_text[:end_index]
+            rest_part = safe_text[end_index:]
+            
+            final_sentence = sentence_part.replace(DECIMAL_PLACEHOLDER, '.')
+            final_rest = rest_part.replace(DECIMAL_PLACEHOLDER, '.')
+            
+            return final_sentence.strip(), final_rest.strip()
+
+        max_chars = 200
+        if len(safe_text) > max_chars:
+            search_area = safe_text[:max_chars + 20]
+            last_space_index = search_area.rfind(" ")
+            if last_space_index > 0:
+                sentence_part = safe_text[:last_space_index]
+                rest_part = safe_text[last_space_index:]
+            else: # Force split if no space is found
+                sentence_part = safe_text[:max_chars]
+                rest_part = safe_text[max_chars:]
+
+            final_sentence = sentence_part.replace(DECIMAL_PLACEHOLDER, '.')
+            final_rest = rest_part.replace(DECIMAL_PLACEHOLDER, '.')
+            return final_sentence.strip(), final_rest.strip()
+
+        # If no sentence end is found and text is not too long, it's a remainder.
+        return "", buffer_text
+
     async def _sentence_generator(self, text_stream: AsyncIterable[str]) -> AsyncGenerator[str, None]:
         """Yields complete, speakable sentences from a text stream."""
         buffer = ""
         async for chunk in text_stream:
             buffer += chunk
             while True:
-                sentence, rest = "", ""
-                for punct in ".!?":
-                    if punct in buffer:
-                        sentence, rest = buffer.split(punct, 1)
-                        sentence += punct; break
+                # Используем наш новый надежный метод
+                sentence, rest = self._find_sentence(buffer)
+                
                 if sentence:
-                    if re.search(r'\w', sentence): yield sentence
+                    if re.search(r'\w', sentence):
+                        yield sentence
                     buffer = rest
-                elif len(buffer) >= 200:
-                    if re.search(r'\w', buffer): yield buffer
-                    buffer = ""
-                else: break
+                else:
+                    # Если предложение не найдено, ждем новых данных
+                    break
+                    
+        # Обрабатываем остаток в буфере после окончания потока
         if buffer.strip() and re.search(r'\w', buffer.strip()):
             yield buffer.strip()
 
@@ -107,6 +149,7 @@ class EdgeStreamProcessor:
                     if not mp3_sentence_bytes:
                         continue
 
+                    # БЕЗУСЛОВНО обрезаем конец КАЖДОГО сгенерированного фрагмента.
                     trimmed_mp3 = await asyncio.to_thread(self._trim_end_of_audio, mp3_sentence_bytes)
                     
                     if trimmed_mp3:
@@ -115,6 +158,7 @@ class EdgeStreamProcessor:
                 except Exception as e:
                     _LOGGER.error("Failed to process sentence '%s': %s", sentence[:30], e)
         finally:
+            # Сигнализируем, что поток данных завершен
             await output_queue.put(None)
 
     async def _synthesize_and_stream(
