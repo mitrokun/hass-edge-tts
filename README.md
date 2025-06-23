@@ -18,6 +18,9 @@ wget -O - https://hacs.vip/get | DOMAIN=edge_tts REPO_PATH=hasscc/hass-edge-tts 
 ```yaml
 Add Edge TTS integration via UI
 ```
+![image](https://github.com/user-attachments/assets/7655029e-8815-4919-8cbd-1eefc57b80fe)
+
+
 
 #### Supported languages
 
