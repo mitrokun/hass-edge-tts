@@ -1,30 +1,36 @@
 # --- START OF FILE tts.py ---
 
 import logging
+from collections import defaultdict
+from typing import Any
 
 from homeassistant.components.tts import (
+    ATTR_VOICE,
     TextToSpeechEntity,
     TTSAudioRequest,
     TTSAudioResponse,
+    Voice,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    DOMAIN, 
-    CONF_LANG, 
-    CONF_RATE,
-    CONF_VOLUME,
-    CONF_PITCH,
+    DOMAIN,
+    CONF_LANG,
     DEFAULT_LANG,
+    CONF_VOICE,
+    DEFAULT_VOICE,
+    CONF_RATE,
     DEFAULT_RATE,
+    CONF_VOLUME,
     DEFAULT_VOLUME,
+    CONF_PITCH,
     DEFAULT_PITCH,
 )
+from .voices import SUPPORTED_VOICES
 from .stream_processor import EdgeStreamProcessor
 
-# Проверка версии, как и раньше
 EDGE_TTS_VERSION = '7.0.2'
 try:
     import edge_tts
@@ -40,313 +46,25 @@ except ImportError:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Словари поддержки языков и голосов
-SUPPORTED_VOICES = {
-    'zh-CN-XiaoxiaoNeural': 'zh-CN',
-    'zh-CN-XiaoyiNeural': 'zh-CN',
-    'zh-CN-YunjianNeural': 'zh-CN',
-    'zh-CN-YunxiNeural': 'zh-CN',
-    'zh-CN-YunxiaNeural': 'zh-CN',
-    'zh-CN-YunyangNeural': 'zh-CN',
-    'zh-HK-HiuGaaiNeural': 'zh-HK',
-    'zh-HK-HiuMaanNeural': 'zh-HK',
-    'zh-HK-WanLungNeural': 'zh-HK',
-    'zh-TW-HsiaoChenNeural': 'zh-TW',
-    'zh-TW-YunJheNeural': 'zh-TW',
-    'zh-TW-HsiaoYuNeural': 'zh-TW',
-    'af-ZA-AdriNeural': 'af-ZA',
-    'af-ZA-WillemNeural': 'af-ZA',
-    'am-ET-AmehaNeural': 'am-ET',
-    'am-ET-MekdesNeural': 'am-ET',
-    'ar-AE-FatimaNeural': 'ar-AE',
-    'ar-AE-HamdanNeural': 'ar-AE',
-    'ar-BH-AliNeural': 'ar-BH',
-    'ar-BH-LailaNeural': 'ar-BH',
-    'ar-DZ-AminaNeural': 'ar-DZ',
-    'ar-DZ-IsmaelNeural': 'ar-DZ',
-    'ar-EG-SalmaNeural': 'ar-EG',
-    'ar-EG-ShakirNeural': 'ar-EG',
-    'ar-IQ-BasselNeural': 'ar-IQ',
-    'ar-IQ-RanaNeural': 'ar-IQ',
-    'ar-JO-SanaNeural': 'ar-JO',
-    'ar-JO-TaimNeural': 'ar-JO',
-    'ar-KW-FahedNeural': 'ar-KW',
-    'ar-KW-NouraNeural': 'ar-KW',
-    'ar-LB-LaylaNeural': 'ar-LB',
-    'ar-LB-RamiNeural': 'ar-LB',
-    'ar-LY-ImanNeural': 'ar-LY',
-    'ar-LY-OmarNeural': 'ar-LY',
-    'ar-MA-JamalNeural': 'ar-MA',
-    'ar-MA-MounaNeural': 'ar-MA',
-    'ar-OM-AbdullahNeural': 'ar-OM',
-    'ar-OM-AyshaNeural': 'ar-OM',
-    'ar-QA-AmalNeural': 'ar-QA',
-    'ar-QA-MoazNeural': 'ar-QA',
-    'ar-SA-HamedNeural': 'ar-SA',
-    'ar-SA-ZariyahNeural': 'ar-SA',
-    'ar-SY-AmanyNeural': 'ar-SY',
-    'ar-SY-LaithNeural': 'ar-SY',
-    'ar-TN-HediNeural': 'ar-TN',
-    'ar-TN-ReemNeural': 'ar-TN',
-    'ar-YE-MaryamNeural': 'ar-YE',
-    'ar-YE-SalehNeural': 'ar-YE',
-    'az-AZ-BabekNeural': 'az-AZ',
-    'az-AZ-BanuNeural': 'az-AZ',
-    'bg-BG-BorislavNeural': 'bg-BG',
-    'bg-BG-KalinaNeural': 'bg-BG',
-    'bn-BD-NabanitaNeural': 'bn-BD',
-    'bn-BD-PradeepNeural': 'bn-BD',
-    'bn-IN-BashkarNeural': 'bn-IN',
-    'bn-IN-TanishaaNeural': 'bn-IN',
-    'bs-BA-GoranNeural': 'bs-BA',
-    'bs-BA-VesnaNeural': 'bs-BA',
-    'ca-ES-EnricNeural': 'ca-ES',
-    'ca-ES-JoanaNeural': 'ca-ES',
-    'cs-CZ-AntoninNeural': 'cs-CZ',
-    'cs-CZ-VlastaNeural': 'cs-CZ',
-    'cy-GB-AledNeural': 'cy-GB',
-    'cy-GB-NiaNeural': 'cy-GB',
-    'da-DK-ChristelNeural': 'da-DK',
-    'da-DK-JeppeNeural': 'da-DK',
-    'de-AT-IngridNeural': 'de-AT',
-    'de-AT-JonasNeural': 'de-AT',
-    'de-CH-JanNeural': 'de-CH',
-    'de-CH-LeniNeural': 'de-CH',
-    'de-DE-AmalaNeural': 'de-DE',
-    'de-DE-ConradNeural': 'de-DE',
-    'de-DE-KatjaNeural': 'de-DE',
-    'de-DE-SeraphinaMultilingualNeural': 'de-DE',
-    'de-DE-KillianNeural': 'de-DE',
-    'el-GR-AthinaNeural': 'el-GR',
-    'el-GR-NestorasNeural': 'el-GR',
-    'en-AU-NatashaNeural': 'en-AU',
-    'en-AU-WilliamNeural': 'en-AU',
-    'en-CA-ClaraNeural': 'en-CA',
-    'en-CA-LiamNeural': 'en-CA',
-    'en-GB-LibbyNeural': 'en-GB',
-    'en-GB-MaisieNeural': 'en-GB',
-    'en-GB-RyanNeural': 'en-GB',
-    'en-GB-SoniaNeural': 'en-GB',
-    'en-GB-ThomasNeural': 'en-GB',
-    'en-HK-SamNeural': 'en-HK',
-    'en-HK-YanNeural': 'en-HK',
-    'en-IE-ConnorNeural': 'en-IE',
-    'en-IE-EmilyNeural': 'en-IE',
-    'en-IN-NeerjaNeural': 'en-IN',
-    'en-IN-PrabhatNeural': 'en-IN',
-    'en-KE-AsiliaNeural': 'en-KE',
-    'en-KE-ChilembaNeural': 'en-KE',
-    'en-NG-AbeoNeural': 'en-NG',
-    'en-NG-EzinneNeural': 'en-NG',
-    'en-NZ-MitchellNeural': 'en-NZ',
-    'en-NZ-MollyNeural': 'en-NZ',
-    'en-PH-JamesNeural': 'en-PH',
-    'en-PH-RosaNeural': 'en-PH',
-    'en-SG-LunaNeural': 'en-SG',
-    'en-SG-WayneNeural': 'en-SG',
-    'en-TZ-ElimuNeural': 'en-TZ',
-    'en-TZ-ImaniNeural': 'en-TZ',
-    'en-US-AnaNeural': 'en-US',
-    'en-US-AriaNeural': 'en-US',
-    'en-US-ChristopherNeural': 'en-US',
-    'en-US-EricNeural': 'en-US',
-    'en-US-GuyNeural': 'en-US',
-    'en-US-JennyNeural': 'en-US',
-    'en-US-MichelleNeural': 'en-US',
-    'en-ZA-LeahNeural': 'en-ZA',
-    'en-ZA-LukeNeural': 'en-ZA',
-    'es-AR-ElenaNeural': 'es-AR',
-    'es-AR-TomasNeural': 'es-AR',
-    'es-BO-MarceloNeural': 'es-BO',
-    'es-BO-SofiaNeural': 'es-BO',
-    'es-CL-CatalinaNeural': 'es-CL',
-    'es-CL-LorenzoNeural': 'es-CL',
-    'es-CO-GonzaloNeural': 'es-CO',
-    'es-CO-SalomeNeural': 'es-CO',
-    'es-CR-JuanNeural': 'es-CR',
-    'es-CR-MariaNeural': 'es-CR',
-    'es-CU-BelkysNeural': 'es-CU',
-    'es-CU-ManuelNeural': 'es-CU',
-    'es-DO-EmilioNeural': 'es-DO',
-    'es-DO-RamonaNeural': 'es-DO',
-    'es-EC-AndreaNeural': 'es-EC',
-    'es-EC-LuisNeural': 'es-EC',
-    'es-ES-AlvaroNeural': 'es-ES',
-    'es-ES-ElviraNeural': 'es-ES',
-    'es-ES-ManuelEsCUNeural': 'es-ES',
-    'es-GQ-JavierNeural': 'es-GQ',
-    'es-GQ-TeresaNeural': 'es-GQ',
-    'es-GT-AndresNeural': 'es-GT',
-    'es-GT-MartaNeural': 'es-GT',
-    'es-HN-CarlosNeural': 'es-HN',
-    'es-HN-KarlaNeural': 'es-HN',
-    'es-MX-DaliaNeural': 'es-MX',
-    'es-MX-JorgeNeural': 'es-MX',
-    'es-MX-LorenzoEsCLNeural': 'es-MX',
-    'es-NI-FedericoNeural': 'es-NI',
-    'es-NI-YolandaNeural': 'es-NI',
-    'es-PA-MargaritaNeural': 'es-PA',
-    'es-PA-RobertoNeural': 'es-PA',
-    'es-PE-AlexNeural': 'es-PE',
-    'es-PE-CamilaNeural': 'es-PE',
-    'es-PR-KarinaNeural': 'es-PR',
-    'es-PR-VictorNeural': 'es-PR',
-    'es-PY-MarioNeural': 'es-PY',
-    'es-PY-TaniaNeural': 'es-PY',
-    'es-SV-LorenaNeural': 'es-SV',
-    'es-SV-RodrigoNeural': 'es-SV',
-    'es-US-AlonsoNeural': 'es-US',
-    'es-US-PalomaNeural': 'es-US',
-    'es-UY-MateoNeural': 'es-UY',
-    'es-UY-ValentinaNeural': 'es-UY',
-    'es-VE-PaolaNeural': 'es-VE',
-    'es-VE-SebastianNeural': 'es-VE',
-    'et-EE-AnuNeural': 'et-EE',
-    'et-EE-KertNeural': 'et-EE',
-    'fa-IR-DilaraNeural': 'fa-IR',
-    'fa-IR-FaridNeural': 'fa-IR',
-    'fi-FI-HarriNeural': 'fi-FI',
-    'fi-FI-NooraNeural': 'fi-FI',
-    'fil-PH-AngeloNeural': 'fil-PH',
-    'fil-PH-BlessicaNeural': 'fil-PH',
-    'fr-BE-CharlineNeural': 'fr-BE',
-    'fr-BE-GerardNeural': 'fr-BE',
-    'fr-CA-AntoineNeural': 'fr-CA',
-    'fr-CA-JeanNeural': 'fr-CA',
-    'fr-CA-SylvieNeural': 'fr-CA',
-    'fr-CH-ArianeNeural': 'fr-CH',
-    'fr-CH-FabriceNeural': 'fr-CH',
-    'fr-FR-DeniseNeural': 'fr-FR',
-    'fr-FR-EloiseNeural': 'fr-FR',
-    'fr-FR-HenriNeural': 'fr-FR',
-    'ga-IE-ColmNeural': 'ga-IE',
-    'ga-IE-OrlaNeural': 'ga-IE',
-    'gl-ES-RoiNeural': 'gl-ES',
-    'gl-ES-SabelaNeural': 'gl-ES',
-    'gu-IN-DhwaniNeural': 'gu-IN',
-    'gu-IN-NiranjanNeural': 'gu-IN',
-    'he-IL-AvriNeural': 'he-IL',
-    'he-IL-HilaNeural': 'he-IL',
-    'hi-IN-MadhurNeural': 'hi-IN',
-    'hi-IN-SwaraNeural': 'hi-IN',
-    'hr-HR-GabrijelaNeural': 'hr-HR',
-    'hr-HR-SreckoNeural': 'hr-HR',
-    'hu-HU-NoemiNeural': 'hu-HU',
-    'hu-HU-TamasNeural': 'hu-HU',
-    'id-ID-ArdiNeural': 'id-ID',
-    'id-ID-GadisNeural': 'id-ID',
-    'is-IS-GudrunNeural': 'is-IS',
-    'is-IS-GunnarNeural': 'is-IS',
-    'it-IT-DiegoNeural': 'it-IT',
-    'it-IT-ElsaNeural': 'it-IT',
-    'it-IT-IsabellaNeural': 'it-IT',
-    'ja-JP-KeitaNeural': 'ja-JP',
-    'ja-JP-NanamiNeural': 'ja-JP',
-    'jv-ID-DimasNeural': 'jv-ID',
-    'jv-ID-SitiNeural': 'jv-ID',
-    'ka-GE-EkaNeural': 'ka-GE',
-    'ka-GE-GiorgiNeural': 'ka-GE',
-    'kk-KZ-AigulNeural': 'kk-KZ',
-    'kk-KZ-DauletNeural': 'kk-KZ',
-    'km-KH-PisethNeural': 'km-KH',
-    'km-KH-SreymomNeural': 'km-KH',
-    'kn-IN-GaganNeural': 'kn-IN',
-    'kn-IN-SapnaNeural': 'kn-IN',
-    'ko-KR-InJoonNeural': 'ko-KR',
-    'ko-KR-SunHiNeural': 'ko-KR',
-    'lo-LA-ChanthavongNeural': 'lo-LA',
-    'lo-LA-KeomanyNeural': 'lo-LA',
-    'lt-LT-LeonasNeural': 'lt-LT',
-    'lt-LT-OnaNeural': 'lt-LT',
-    'lv-LV-EveritaNeural': 'lv-LV',
-    'lv-LV-NilsNeural': 'lv-LV',
-    'mk-MK-AleksandarNeural': 'mk-MK',
-    'mk-MK-MarijaNeural': 'mk-MK',
-    'ml-IN-MidhunNeural': 'ml-IN',
-    'ml-IN-SobhanaNeural': 'ml-IN',
-    'mn-MN-BataaNeural': 'mn-MN',
-    'mn-MN-YesuiNeural': 'mn-MN',
-    'mr-IN-AarohiNeural': 'mr-IN',
-    'mr-IN-ManoharNeural': 'mr-IN',
-    'ms-MY-OsmanNeural': 'ms-MY',
-    'ms-MY-YasminNeural': 'ms-MY',
-    'mt-MT-GraceNeural': 'mt-MT',
-    'mt-MT-JosephNeural': 'mt-MT',
-    'my-MM-NilarNeural': 'my-MM',
-    'my-MM-ThihaNeural': 'my-MM',
-    'nb-NO-FinnNeural': 'nb-NO',
-    'nb-NO-PernilleNeural': 'nb-NO',
-    'ne-NP-HemkalaNeural': 'ne-NP',
-    'ne-NP-SagarNeural': 'ne-NP',
-    'nl-BE-ArnaudNeural': 'nl-BE',
-    'nl-BE-DenaNeural': 'nl-BE',
-    'nl-NL-ColetteNeural': 'nl-NL',
-    'nl-NL-FennaNeural': 'nl-NL',
-    'nl-NL-MaartenNeural': 'nl-NL',
-    'pl-PL-MarekNeural': 'pl-PL',
-    'pl-PL-ZofiaNeural': 'pl-PL',
-    'ps-AF-GulNawazNeural': 'ps-AF',
-    'ps-AF-LatifaNeural': 'ps-AF',
-    'pt-BR-AntonioNeural': 'pt-BR',
-    'pt-BR-FranciscaNeural': 'pt-BR',
-    'pt-PT-DuarteNeural': 'pt-PT',
-    'pt-PT-RaquelNeural': 'pt-PT',
-    'ro-RO-AlinaNeural': 'ro-RO',
-    'ro-RO-EmilNeural': 'ro-RO',
-    'ru-RU-DmitryNeural': 'ru-RU',
-    'ru-RU-SvetlanaNeural': 'ru-RU',
-    'si-LK-SameeraNeural': 'si-LK',
-    'si-LK-ThiliniNeural': 'si-LK',
-    'sk-SK-LukasNeural': 'sk-SK',
-    'sk-SK-ViktoriaNeural': 'sk-SK',
-    'sl-SI-PetraNeural': 'sl-SI',
-    'sl-SI-RokNeural': 'sl-SI',
-    'so-SO-MuuseNeural': 'so-SO',
-    'so-SO-UbaxNeural': 'so-SO',
-    'sq-AL-AnilaNeural': 'sq-AL',
-    'sq-AL-IlirNeural': 'sq-AL',
-    'sr-RS-NicholasNeural': 'sr-RS',
-    'sr-RS-SophieNeural': 'sr-RS',
-    'su-ID-JajangNeural': 'su-ID',
-    'su-ID-TutiNeural': 'su-ID',
-    'sv-SE-MattiasNeural': 'sv-SE',
-    'sv-SE-SofieNeural': 'sv-SE',
-    'sw-KE-RafikiNeural': 'sw-KE',
-    'sw-KE-ZuriNeural': 'sw-KE',
-    'sw-TZ-DaudiNeural': 'sw-TZ',
-    'sw-TZ-RehemaNeural': 'sw-TZ',
-    'ta-IN-PallaviNeural': 'ta-IN',
-    'ta-IN-ValluvarNeural': 'ta-IN',
-    'ta-LK-KumarNeural': 'ta-LK',
-    'ta-LK-SaranyaNeural': 'ta-LK',
-    'ta-MY-KaniNeural': 'ta-MY',
-    'ta-MY-SuryaNeural': 'ta-MY',
-    'ta-SG-AnbuNeural': 'ta-SG',
-    'ta-SG-VenbaNeural': 'ta-SG',
-    'te-IN-MohanNeural': 'te-IN',
-    'te-IN-ShrutiNeural': 'te-IN',
-    'th-TH-NiwatNeural': 'th-TH',
-    'th-TH-PremwadeeNeural': 'th-TH',
-    'tr-TR-AhmetNeural': 'tr-TR',
-    'tr-TR-EmelNeural': 'tr-TR',
-    'uk-UA-OstapNeural': 'uk-UA',
-    'uk-UA-PolinaNeural': 'uk-UA',
-    'ur-IN-GulNeural': 'ur-IN',
-    'ur-IN-SalmanNeural': 'ur-IN',
-    'ur-PK-AsadNeural': 'ur-PK',
-    'ur-PK-UzmaNeural': 'ur-PK',
-    'uz-UZ-MadinaNeural': 'uz-UZ',
-    'uz-UZ-SardorNeural': 'uz-UZ',
-    'vi-VN-HoaiMyNeural': 'vi-VN',
-    'vi-VN-NamMinhNeural': 'vi-VN',
-    'zu-ZA-ThandoNeural': 'zu-ZA',
-    'zu-ZA-ThembaNeural': 'zu-ZA',
-}
-SUPPORTED_LANGUAGES = {
-    **dict(zip(SUPPORTED_VOICES.values(), SUPPORTED_VOICES.keys())),
-    'zh-CN': 'zh-CN-XiaoxiaoNeural',
-}
-SUPPORTED_OPTIONS_LIST = ['voice', 'pitch', 'rate', 'volume']
+
+def _prepare_voice_data(source_voices: dict[str, str]) -> tuple[dict, list, list]:
+    """Преобразует исходный словарь голосов в структуры, удобные для HA."""
+    grouped_voices = defaultdict(list)
+    for voice_id, lang_code in source_voices.items():
+        friendly_name = voice_id.replace(f"{lang_code}-", "", 1)
+        grouped_voices[lang_code].append((friendly_name, voice_id))
+
+    voices_by_lang = {
+        lang: sorted(voices) for lang, voices in grouped_voices.items()
+    }
+    
+    all_languages = sorted(voices_by_lang.keys())
+    all_voice_ids = sorted(source_voices.keys())
+
+    return voices_by_lang, all_languages, all_voice_ids
+
+
+VOICES_BY_LANG, ALL_SUPPORTED_LANGUAGES, ALL_SUPPORTED_VOICES = _prepare_voice_data(SUPPORTED_VOICES)
 
 
 async def async_setup_entry(
@@ -377,66 +95,72 @@ class EdgeTtsEntity(TextToSpeechEntity):
     @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        return list(set([*SUPPORTED_LANGUAGES.keys(), *SUPPORTED_VOICES.keys()]))
+        return ALL_SUPPORTED_LANGUAGES
 
     @property
     def supported_options(self) -> list[str]:
         """Return a list of supported options."""
-        return SUPPORTED_OPTIONS_LIST
+        return [ATTR_VOICE, 'pitch', 'rate', 'volume']
+    
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Return a dict including default options."""
+        return {
+            ATTR_VOICE: self._config_entry.options.get(CONF_VOICE, DEFAULT_VOICE)
+        }
+
+    @callback
+    def async_get_supported_voices(self, language: str) -> list[Voice] | None:
+        """Return a list of supported voices for a language."""
+        if not (voices := VOICES_BY_LANG.get(language)):
+            return None
+        return [Voice(voice_id, name) for name, voice_id in voices]
+
+    def _format_param(self, value: Any, suffix: str) -> str:
+        """Formats a numeric or string value into the required string format for edge-tts."""
+        try:
+            numeric_value = int(value)
+            return f"{numeric_value:+d}{suffix}"
+        except (ValueError, TypeError):
+            return str(value)
 
     def _get_tts_params(self, language: str, options: dict) -> dict:
         """Helper to determine voice and other params from options."""
-        # Приоритет: 
-        # 1. Опции из вызова сервиса (`options`)
-        # 2. Опции из настроек UI (`self._config_entry.options`)
         conf = {**self._config_entry.options, **options}
-
-        resolved_lang = language
-        if resolved_lang in SUPPORTED_VOICES:
-            voice = resolved_lang
-        else:
-            voice = conf.get('voice') or SUPPORTED_LANGUAGES.get(resolved_lang)
-
+        
+        voice = conf.get(ATTR_VOICE)
         if not voice:
-            voice = SUPPORTED_LANGUAGES[DEFAULT_LANG]
-            _LOGGER.warning("Could not find a voice for language %s. Falling back to %s", resolved_lang, voice)
+            default_voice_tuple = VOICES_BY_LANG.get(language, [("", DEFAULT_VOICE)])[0]
+            voice = default_voice_tuple[1]
 
         return {
             "voice": voice,
-            "rate": str(conf.get(CONF_RATE, DEFAULT_RATE)),
-            "pitch": str(conf.get(CONF_PITCH, DEFAULT_PITCH)),
-            "volume": str(conf.get(CONF_VOLUME, DEFAULT_VOLUME)),
+            "rate": self._format_param(conf.get("rate", DEFAULT_RATE), "%"),
+            "volume": self._format_param(conf.get("volume", DEFAULT_VOLUME), "%"),
+            "pitch": self._format_param(conf.get("pitch", DEFAULT_PITCH), "Hz"),
         }
 
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict | None = None
     ) -> tuple[str, bytes | None]:
-        """Handle non-streaming TTS requests."""
         options = options or {}
         params = self._get_tts_params(language, options)
         _LOGGER.debug("Requesting non-streaming audio with params: %s", params)
-
         async def single_message_stream():
             yield message
-
         audio_generator = self._processor.async_process_stream(single_message_stream(), **params)
-
         try:
             mp3_chunks = [chunk async for chunk in audio_generator]
             if not mp3_chunks:
                 _LOGGER.error("TTS synthesis failed to produce any audio for message: %s", message[:100])
                 return "mp3", None
-            
             return "mp3", b"".join(mp3_chunks)
         except Exception as e:
             _LOGGER.error("Error during non-streaming TTS audio generation: %s", e)
             return "mp3", None
 
     async def async_stream_tts_audio(self, request: TTSAudioRequest) -> TTSAudioResponse:
-        """Handle true streaming TTS requests."""
         params = self._get_tts_params(request.language, request.options)
         _LOGGER.debug("Requesting streaming audio with params: %s", params)
-
         audio_generator = self._processor.async_process_stream(request.message_gen, **params)
-        
         return TTSAudioResponse(extension="mp3", data_gen=audio_generator)
