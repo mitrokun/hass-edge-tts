@@ -11,18 +11,22 @@ from homeassistant.config_entries import (
     OptionsFlowWithConfigEntry,
 )
 from homeassistant.core import callback
+from homeassistant.helpers.selector import selector
 
 from .const import (
     DOMAIN,
-    CONF_LANG, 
-    CONF_RATE,
-    CONF_VOLUME,
-    CONF_PITCH,
+    CONF_LANG,
     DEFAULT_LANG,
+    CONF_VOICE,
+    DEFAULT_VOICE,
+    CONF_RATE,
     DEFAULT_RATE,
+    CONF_VOLUME,
     DEFAULT_VOLUME,
+    CONF_PITCH,
     DEFAULT_PITCH,
 )
+from .tts import ALL_SUPPORTED_LANGUAGES, ALL_SUPPORTED_VOICES
 
 
 class EdgeTtsConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -42,7 +46,6 @@ class EdgeTtsConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step."""
-        # Может быть только одна запись Edge TTS
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
 
@@ -62,29 +65,62 @@ class OptionsFlowHandler(OptionsFlowWithConfigEntry):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # Создаем схему для формы настроек
         schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_LANG,
-                    description={"suggested_value": self.options.get(CONF_LANG)},
-                    default=DEFAULT_LANG,
-                ): str,
+                    default=self.options.get(CONF_LANG, DEFAULT_LANG),
+                ): selector({
+                    "select": {
+                        "options": ALL_SUPPORTED_LANGUAGES,
+                        "mode": "dropdown",
+                    }
+                }),
+                vol.Optional(
+                    CONF_VOICE,
+                    default=self.options.get(CONF_VOICE, DEFAULT_VOICE),
+                ): selector({
+                    "select": {
+                        "options": ALL_SUPPORTED_VOICES,
+                        "mode": "dropdown",
+                    }
+                }),
                 vol.Optional(
                     CONF_RATE,
-                    description={"suggested_value": self.options.get(CONF_RATE)},
-                    default=DEFAULT_RATE,
-                ): str,
+                    default=self.options.get(CONF_RATE, DEFAULT_RATE),
+                ): selector({
+                    "number": {
+                        "min": -100,
+                        "max": 100,
+                        "step": 1,
+                        "mode": "slider",
+                        "unit_of_measurement": "%",
+                    }
+                }),
                 vol.Optional(
                     CONF_VOLUME,
-                    description={"suggested_value": self.options.get(CONF_VOLUME)},
-                    default=DEFAULT_VOLUME,
-                ): str,
+                    default=self.options.get(CONF_VOLUME, DEFAULT_VOLUME),
+                ): selector({
+                    "number": {
+                        "min": -100,
+                        "max": 100,
+                        "step": 1,
+                        "mode": "slider",
+                        "unit_of_measurement": "%",
+                    }
+                }),
                 vol.Optional(
                     CONF_PITCH,
-                    description={"suggested_value": self.options.get(CONF_PITCH)},
-                    default=DEFAULT_PITCH,
-                ): str,
+                    default=self.options.get(CONF_PITCH, DEFAULT_PITCH),
+                ): selector({
+                    "number": {
+                        "min": -100,
+                        "max": 100,
+                        "step": 1,
+                        "mode": "slider",
+                        "unit_of_measurement": "Hz",
+                    }
+                }),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
