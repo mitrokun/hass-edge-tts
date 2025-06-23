@@ -11,9 +11,20 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, CONF_LANG, DEFAULT_LANG
+from .const import (
+    DOMAIN, 
+    CONF_LANG, 
+    CONF_RATE,
+    CONF_VOLUME,
+    CONF_PITCH,
+    DEFAULT_LANG,
+    DEFAULT_RATE,
+    DEFAULT_VOLUME,
+    DEFAULT_PITCH,
+)
 from .stream_processor import EdgeStreamProcessor
 
+# Проверка версии, как и раньше
 EDGE_TTS_VERSION = '7.0.2'
 try:
     import edge_tts
@@ -29,6 +40,7 @@ except ImportError:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Словари поддержки языков и голосов
 SUPPORTED_VOICES = {
     'zh-CN-XiaoxiaoNeural': 'zh-CN',
     'zh-CN-XiaoyiNeural': 'zh-CN',
@@ -374,6 +386,9 @@ class EdgeTtsEntity(TextToSpeechEntity):
 
     def _get_tts_params(self, language: str, options: dict) -> dict:
         """Helper to determine voice and other params from options."""
+        # Приоритет: 
+        # 1. Опции из вызова сервиса (`options`)
+        # 2. Опции из настроек UI (`self._config_entry.options`)
         conf = {**self._config_entry.options, **options}
 
         resolved_lang = language
@@ -388,9 +403,9 @@ class EdgeTtsEntity(TextToSpeechEntity):
 
         return {
             "voice": voice,
-            "rate": str(conf.get("rate", "+0%")),
-            "pitch": str(conf.get("pitch", "+0Hz")),
-            "volume": str(conf.get("volume", "+0%")),
+            "rate": str(conf.get(CONF_RATE, DEFAULT_RATE)),
+            "pitch": str(conf.get(CONF_PITCH, DEFAULT_PITCH)),
+            "volume": str(conf.get(CONF_VOLUME, DEFAULT_VOLUME)),
         }
 
     async def async_get_tts_audio(
@@ -409,7 +424,7 @@ class EdgeTtsEntity(TextToSpeechEntity):
         try:
             mp3_chunks = [chunk async for chunk in audio_generator]
             if not mp3_chunks:
-                _LOGGER.error("TTS synthesis failed for message: %s", message[:100])
+                _LOGGER.error("TTS synthesis failed to produce any audio for message: %s", message[:100])
                 return "mp3", None
             
             return "mp3", b"".join(mp3_chunks)
