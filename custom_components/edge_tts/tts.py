@@ -143,24 +143,36 @@ class EdgeTtsEntity(TextToSpeechEntity):
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict | None = None
     ) -> tuple[str, bytes | None]:
+        """Get TTS audio for a message."""
         options = options or {}
         params = self._get_tts_params(language, options)
         _LOGGER.debug("Requesting non-streaming audio with params: %s", params)
-        async def single_message_stream():
-            yield message
-        audio_generator = self._processor.async_process_stream(single_message_stream(), **params)
+
         try:
-            mp3_chunks = [chunk async for chunk in audio_generator]
-            if not mp3_chunks:
+            final_mp3_bytes = await self._processor.async_process_to_single_file(
+                message, **params
+            )
+
+            if not final_mp3_bytes:
                 _LOGGER.error("TTS synthesis failed to produce any audio for message: %s", message[:100])
                 return "mp3", None
-            return "mp3", b"".join(mp3_chunks)
+            
+            return "mp3", final_mp3_bytes
+
         except Exception as e:
-            _LOGGER.error("Error during non-streaming TTS audio generation: %s", e)
+            _LOGGER.error("Error during non-streaming TTS audio generation: %s", e, exc_info=True)
             return "mp3", None
 
     async def async_stream_tts_audio(self, request: TTSAudioRequest) -> TTSAudioResponse:
         params = self._get_tts_params(request.language, request.options)
         _LOGGER.debug("Requesting streaming audio with params: %s", params)
+
+        # NOTE: The stream produced by async_process_stream is a concatenation of
+        # multiple independent MP3 files, one for each sentence. This is a deliberate
+        # trade-off to achieve low latency and seamless playback by trimming pauses
+        # between sentences. While this format is handled correctly by most modern
+        # media players and browsers, it is not a standard-compliant single MP3 file
+        # and may fail in tools that expect a single header (e.g., ffmpeg without
+        # special flags). For a standard-compliant file, use async_get_tts_audio.
         audio_generator = self._processor.async_process_stream(request.message_gen, **params)
         return TTSAudioResponse(extension="mp3", data_gen=audio_generator)
