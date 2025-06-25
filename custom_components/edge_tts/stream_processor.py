@@ -21,6 +21,8 @@ _LOGGER = logging.getLogger(__name__)
 # Количество миллисекунд, которое мы отрезаем с конца каждого фрагмента
 TRIM_MS_FROM_END = 750
 
+SYNTHESIS_DELAY_S = 0.1
+
 class EdgeStreamProcessor:
     def __init__(self):
         pass
@@ -141,6 +143,9 @@ class EdgeStreamProcessor:
             sentences_generator = self._sentence_generator(self._preprocess_stream(text_stream))
             
             async for sentence in sentences_generator:
+                # Добавляем небольшую задержку между запросами к TTS-серверу.
+                await asyncio.sleep(SYNTHESIS_DELAY_S)
+
                 try:
                     mp3_sentence_bytes = b''
                     async for audio_chunk in self._synthesize_and_stream(sentence, voice, rate, pitch, volume):
@@ -174,3 +179,80 @@ class EdgeStreamProcessor:
                     yield chunk["data"]
         except Exception:
             _LOGGER.exception("Error during synthesis for text: %s", text[:50])
+
+    async def async_process_to_single_file(
+        self, text: str, voice: str, rate: str, pitch: str, volume: str
+    ) -> bytes | None:
+        """
+        Processes a full text string into a single, seamless, and valid MP3 file.
+        This method is for non-streaming use cases (e.g., caching).
+        It synthesizes each sentence, trims the end, and then properly joins them
+        using pydub to ensure a single valid MP3 header in the final output.
+        """
+        _LOGGER.debug("Processing text to a single file.")
+
+        # Шаг 1: Разделение текста на предложения с помощью нашего существующего генератора.
+        # Мы создаем временный "stream" из одного куска текста.
+        async def text_stream():
+            yield text
+        
+        sentences_generator = self._sentence_generator(self._preprocess_stream(text_stream()))
+        
+        # Шаг 2: Синтез и сборка AudioSegment'ов для каждого предложения.
+        all_segments = []
+        try:
+            async for sentence in sentences_generator:
+                if not sentence.strip():
+                    continue
+
+                # Добавляем задержку, чтобы не перегружать TTS-сервер
+                await asyncio.sleep(SYNTHESIS_DELAY_S)
+                
+                # Синтезируем предложение в байты
+                mp3_sentence_bytes = b''
+                try:
+                    async for audio_chunk in self._synthesize_and_stream(sentence, voice, rate, pitch, volume):
+                        mp3_sentence_bytes += audio_chunk
+                    
+                    if not mp3_sentence_bytes:
+                        _LOGGER.warning("TTS synthesis for sentence returned no data: %s", sentence[:30])
+                        continue
+
+                    # Преобразуем байты в AudioSegment и сразу обрезаем
+                    segment = await asyncio.to_thread(
+                        AudioSegment.from_file, io.BytesIO(mp3_sentence_bytes), format="mp3"
+                    )
+                    
+                    if len(segment) > TRIM_MS_FROM_END:
+                        trimmed_segment = segment[:-TRIM_MS_FROM_END]
+                        all_segments.append(trimmed_segment)
+                    else:
+                        all_segments.append(segment) # Добавляем как есть, если короче обрезки
+                
+                except Exception as e:
+                    _LOGGER.warning("Failed to process sentence '%s' for single file: %s", sentence[:30], e)
+                    # Продолжаем со следующим предложением, не прерывая весь процесс
+                    continue
+        except Exception as e:
+            _LOGGER.error("Error in sentence generator during single file processing: %s", e)
+            return None
+
+        if not all_segments:
+            _LOGGER.error("No audio segments were generated for the text.")
+            return None
+
+        # Шаг 3: "Сложение" всех сегментов в один и экспорт.
+        _LOGGER.debug("Joining %d audio segments into a single file.", len(all_segments))
+        
+        def join_and_export_segments():
+            final_audio = sum(all_segments, AudioSegment.empty())            
+            output_buffer = io.BytesIO()
+            final_audio.export(output_buffer, format="mp3")
+            return output_buffer.getvalue()
+
+        try:
+            final_mp3_bytes = await asyncio.to_thread(join_and_export_segments)
+            return final_mp3_bytes
+        except Exception as e:
+            _LOGGER.error("Failed to join and export final audio file: %s", e)
+            return None
