@@ -20,8 +20,6 @@ except ImportError:
 
 _LOGGER = logging.getLogger(__name__)
 
-# --- Константы ---
-
 # Trim 750 ms from the end of each audio fragment, selected empirically
 TRIM_MS_FROM_END = 750
 
@@ -89,7 +87,7 @@ class EdgeStreamProcessor:
     async def _sentence_generator(self, text_stream: AsyncIterable[str]) -> AsyncGenerator[str, None]:
         """Yields complete, speakable sentences from a raw text stream."""
         buffer = ""
-        # Теперь работает напрямую с "сырым" потоком
+
         async for chunk in text_stream:
             buffer += chunk
             while True:
