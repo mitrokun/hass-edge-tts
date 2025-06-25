@@ -1,4 +1,4 @@
-# --- START OF FILE stream_processor.py (ФИНАЛЬНАЯ УПРОЩЕННАЯ ВЕРСИЯ) ---
+# --- START OF FILE stream_processor.py ---
 
 import asyncio
 import re
@@ -12,13 +12,12 @@ try:
     from edge_tts.communicate import remove_incompatible_characters
     from pydub import AudioSegment
 except ImportError:
-    # Заглушки, чтобы код оставался синтаксически верным.
     def remove_incompatible_characters(text: str) -> str: return text
     pass
 
 _LOGGER = logging.getLogger(__name__)
 
-# Количество миллисекунд, которое мы отрезаем с конца каждого фрагмента
+# Trim 750 ms from the end of each audio fragment, selected empirically
 TRIM_MS_FROM_END = 750
 
 SYNTHESIS_DELAY_S = 0.1
@@ -79,7 +78,6 @@ class EdgeStreamProcessor:
         async for chunk in text_stream:
             buffer += chunk
             while True:
-                # Используем наш новый надежный метод
                 sentence, rest = self._find_sentence(buffer)
                 
                 if sentence:
@@ -87,7 +85,6 @@ class EdgeStreamProcessor:
                         yield sentence
                     buffer = rest
                 else:
-                    # Если предложение не найдено, ждем новых данных
                     break
                     
         # Обрабатываем остаток в буфере после окончания потока
