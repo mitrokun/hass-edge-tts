@@ -164,15 +164,13 @@ class EdgeTtsEntity(TextToSpeechEntity):
             return "mp3", None
 
     async def async_stream_tts_audio(self, request: TTSAudioRequest) -> TTSAudioResponse:
+        """Stream TTS audio for a message."""
         params = self._get_tts_params(request.language, request.options)
-        _LOGGER.debug("Requesting streaming audio with params: %s", params)
+        
+        _LOGGER.debug("Requesting streaming audio as WAV with params: %s", params)
 
-        # NOTE: The stream produced by async_process_stream is a concatenation of
-        # multiple independent MP3 files, one for each sentence. This is a deliberate
-        # trade-off to achieve low latency and seamless playback by trimming pauses
-        # between sentences. While this format is handled correctly by most modern
-        # media players and browsers, it is not a standard-compliant single MP3 file
-        # and may fail in tools that expect a single header (e.g., ffmpeg without
-        # special flags). For a standard-compliant file, use async_get_tts_audio.
-        audio_generator = self._processor.async_process_stream(request.message_gen, **params)
-        return TTSAudioResponse(extension="mp3", data_gen=audio_generator)
+        audio_generator = self._processor.async_process_stream_as_wav(
+            request.message_gen, **params
+        )
+
+        return TTSAudioResponse(extension="wav", data_gen=audio_generator)
