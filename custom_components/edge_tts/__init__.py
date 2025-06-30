@@ -27,7 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def dummy_stream():
             yield "init"
 
-        audio_generator = processor.async_process_stream(
+        audio_generator = processor.async_process_stream_as_wav(
             dummy_stream(),
             voice="en-US-JennyNeural",
             rate="+0%",
